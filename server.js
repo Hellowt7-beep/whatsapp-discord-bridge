@@ -33,7 +33,7 @@ const CONFIG = {
     messageTimeout: (process.env.MESSAGE_TIMEOUT_MINUTES || 2) * 60 * 1000,
     triggerChar: process.env.TRIGGER_CHARACTER || '.',
     sessionName: process.env.WHATSAPP_SESSION_NAME || 'bridge-session',
-    isProduction: process.env.NODE_ENV === 'production',
+    isProduction: process.env.NODE_ENV === 'production' || process.env.VERCEL,
     pingUrl: process.env.PING_URL || null
 };
 
@@ -46,11 +46,8 @@ let isDiscordReady = false;
 let lastPing = Date.now();
 let serverStartTime = Date.now();
 
-// Create uploads directory (Vercel-compatible)
-const uploadsDir = CONFIG.isProduction ? os.tmpdir() : path.join(__dirname, 'uploads');
-if (!CONFIG.isProduction && !fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-}
+// Use temp directory for uploads (Vercel-compatible)
+const uploadsDir = os.tmpdir();
 
 // Improved Puppeteer configuration for Vercel
 async function getPuppeteerConfig() {
@@ -100,8 +97,8 @@ async function initializeWhatsApp() {
 
     const puppeteerConfig = await getPuppeteerConfig();
 
-    // Session path for Vercel
-    const sessionPath = CONFIG.isProduction ? path.join(os.tmpdir(), 'whatsapp-session') : './whatsapp-session';
+    // Session path for Vercel (always use temp dir)
+    const sessionPath = path.join(os.tmpdir(), 'whatsapp-session');
 
     whatsappClient = new Client({
         authStrategy: new LocalAuth({
@@ -115,7 +112,7 @@ async function initializeWhatsApp() {
         console.log('📱 WhatsApp QR Code:');
         qrcode.generate(qr, { small: true });
         console.log('💡 Scan this QR code with your WhatsApp (Dual Account recommended)');
-        console.log('🔗 Or visit: https://your-app.vercel.app/qr to see QR in browser');
+        console.log('🔗 Or visit: https://your-app.vercel.app/dashboard to see status');
     });
 
     whatsappClient.on('ready', () => {
@@ -173,7 +170,7 @@ function initializeDiscord() {
         ]
     });
 
-    discordClient.once('ready', () => {
+    discordClient.once('clientReady', () => {
         console.log(`✅ Discord bot logged in as ${discordClient.user.tag}!`);
         isDiscordReady = true;
     });
@@ -419,7 +416,7 @@ app.get('/', (req, res) => {
         activeMessages: activeMessages.size,
         uptime: Math.floor((Date.now() - serverStartTime) / 1000),
         lastPing: new Date(lastPing).toISOString(),
-        version: '2.0.0'
+        version: '2.1.0'
     });
 });
 
@@ -482,21 +479,48 @@ app.get('/dashboard', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WhatsApp-Discord Bridge Dashboard</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
-        .status { padding: 10px; margin: 10px 0; border-radius: 5px; }
-        .online { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .offline { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-        .stat-card { background: #e9ecef; padding: 15px; border-radius: 8px; text-align: center; }
-        .refresh-btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }
+        .container { max-width: 900px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .status { padding: 15px; margin: 15px 0; border-radius: 10px; font-weight: bold; }
+        .online { background: linear-gradient(135deg, #d4edda, #c3e6cb); color: #155724; border: 2px solid #28a745; }
+        .offline { background: linear-gradient(135deg, #f8d7da, #f5c6cb); color: #721c24; border: 2px solid #dc3545; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin: 20px 0; }
+        .stat-card { background: linear-gradient(135deg, #f8f9fa, #e9ecef); padding: 20px; border-radius: 12px; text-align: center; border: 1px solid #dee2e6; }
+        .stat-card h3 { margin: 0 0 10px 0; color: #495057; font-size: 14px; text-transform: uppercase; }
+        .stat-card p { margin: 0; font-size: 24px; font-weight: bold; color: #212529; }
+        .refresh-btn { background: linear-gradient(135deg, #007bff, #0056b3); color: white; border: none; padding: 12px 25px; border-radius: 8px; cursor: pointer; font-size: 16px; transition: all 0.3s; }
+        .refresh-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,123,255,0.4); }
+        .qr-section { margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 10px; border-left: 4px solid #007bff; }
+        .alert { padding: 15px; margin: 15px 0; border-radius: 10px; border-left: 4px solid #ffc107; background: #fff3cd; color: #856404; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🌉 WhatsApp-Discord Bridge Dashboard</h1>
+        <div class="header">
+            <h1>🌉 WhatsApp-Discord Bridge</h1>
+            <p>Dashboard & Status Monitor</p>
+        </div>
+
+        <div class="alert">
+            <strong>💡 QR Code Hinweis:</strong> Falls WhatsApp offline ist, prüfe die Vercel Logs für den QR Code zum Scannen.
+        </div>
+
         <div id="status-container"></div>
-        <button class="refresh-btn" onclick="loadStatus()">Aktualisieren</button>
+
+        <div style="text-align: center; margin: 30px 0;">
+            <button class="refresh-btn" onclick="loadStatus()">🔄 Status Aktualisieren</button>
+        </div>
+
+        <div class="qr-section">
+            <h3>📱 WhatsApp Setup</h3>
+            <ol>
+                <li>Öffne WhatsApp → Menü → "Verknüpfte Geräte"</li>
+                <li>Klicke "Gerät verknüpfen"</li>
+                <li>Scanne den QR Code aus den Vercel Logs</li>
+                <li>Bridge ist bereit! Nutze "${CONFIG.triggerChar}" vor Nachrichten</li>
+            </ol>
+        </div>
     </div>
 
     <script>
@@ -507,10 +531,10 @@ app.get('/dashboard', (req, res) => {
 
                 document.getElementById('status-container').innerHTML = \`
                     <div class="status \${data.whatsapp.ready ? 'online' : 'offline'}">
-                        📱 WhatsApp: \${data.whatsapp.ready ? 'Online' : 'Offline'}
+                        📱 WhatsApp: \${data.whatsapp.ready ? '✅ Online & Bereit' : '⏳ Offline - QR Code scannen erforderlich'}
                     </div>
                     <div class="status \${data.discord.ready ? 'online' : 'offline'}">
-                        🤖 Discord: \${data.discord.ready ? 'Online (' + (data.discord.user || 'Unknown') + ')' : 'Offline'}
+                        🤖 Discord: \${data.discord.ready ? '✅ Online (' + (data.discord.user || 'Unknown') + ')' : '❌ Offline - Token prüfen'}
                     </div>
                     <div class="stats">
                         <div class="stat-card">
@@ -518,24 +542,36 @@ app.get('/dashboard', (req, res) => {
                             <p>\${data.bridge.activeMessages}</p>
                         </div>
                         <div class="stat-card">
-                            <h3>Uptime</h3>
+                            <h3>Server Uptime</h3>
                             <p>\${Math.floor(data.server.uptime / 3600)}h \${Math.floor((data.server.uptime % 3600) / 60)}m</p>
                         </div>
                         <div class="stat-card">
-                            <h3>Memory</h3>
+                            <h3>Memory Usage</h3>
                             <p>\${Math.round(data.server.memory.rss / 1024 / 1024)}MB</p>
                         </div>
                         <div class="stat-card">
-                            <h3>Trigger</h3>
+                            <h3>Trigger Zeichen</h3>
                             <p>"\${data.bridge.config.triggerChar}"</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Timeout</h3>
+                            <p>\${data.bridge.config.timeoutMinutes} Min</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Letzter Ping</h3>
+                            <p>\${new Date(data.server.lastPing).toLocaleTimeString('de-DE')}</p>
                         </div>
                     </div>
                 \`;
             } catch (error) {
-                document.getElementById('status-container').innerHTML = '<div class="status offline">Error loading status</div>';
+                document.getElementById('status-container').innerHTML = '<div class="status offline">❌ Fehler beim Laden des Status</div>';
             }
         }
+
+        // Load status on page load
         loadStatus();
+
+        // Auto-refresh every 30 seconds
         setInterval(loadStatus, 30000);
     </script>
 </body>
@@ -547,6 +583,7 @@ app.get('/dashboard', (req, res) => {
 console.log('🚀 Starting WhatsApp-Discord Bridge on Vercel...');
 console.log('📡 Platform: Vercel Serverless');
 console.log('🔧 Environment:', CONFIG.isProduction ? 'Production' : 'Development');
+console.log('📁 Uploads Dir:', uploadsDir);
 
 // Initialize Discord first (faster)
 initializeDiscord();
@@ -635,5 +672,3 @@ process.on('uncaughtException', (error) => {
 });
 
 export default app;
-
-
