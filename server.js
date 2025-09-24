@@ -30,7 +30,7 @@ const CONFIG = {
     port: process.env.PORT || 3000,
     discordToken: process.env.DISCORD_BOT_TOKEN,
     discordChannelId: process.env.DISCORD_CHANNEL_ID,
-    messageTimeout: (process.env.MESSAGE_TIMEOUT_MINUTES || 2) * 60 * 1000,
+    messageTimeout: (process.env.MESSAGE_TIMEOUT_MINUTES || 0.5) * 60 * 1000,
     triggerChar: process.env.TRIGGER_CHARACTER || '.',
     sessionName: process.env.WHATSAPP_SESSION_NAME || 'bridge-session',
     isProduction: process.env.NODE_ENV === 'production' || process.env.VERCEL,
@@ -152,6 +152,7 @@ async function initializeWhatsApp() {
             console.log('💡 2. "Gerät verknüpfen" → QR Code scannen');
             console.log('💡 3. QR Code läuft in 20 Sekunden ab!');
             console.log('🔗 QR Code auch verfügbar unter: /qr');
+            console.log('⚡ Bot sammelt jetzt 30 Sekunden Discord-Antworten (auch von Bots)');
             console.log('='.repeat(60) + '\n');
 
             // Store QR code for web display
@@ -264,15 +265,15 @@ async function handleWhatsAppMessage(message) {
 
     console.log(`📨 WhatsApp message received: ${message.body}`);
 
-    // Extract message content (remove trigger character)
-    const content = message.body.substring(1).trim();
+    // Use the complete message content (keep trigger character)
+    const content = message.body.trim();
     if (!content) return;
 
     // Get chat info
     const chat = await message.getChat();
     const contact = await message.getContact();
 
-    // Create bridge message ID
+    // Create bridge message ID for response collection
     const bridgeId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     // Store message info for response bridging
@@ -292,15 +293,15 @@ async function handleWhatsAppMessage(message) {
             return;
         }
 
-        // Format message for Discord
-        const discordMessage = `**From WhatsApp** (${contact.name || contact.pushname || 'Unknown'}):\n${content}\n\n*Bridge ID: ${bridgeId}*`;
+        // Send the message content directly to Discord
+        let discordMessage = content;
 
         // Handle media if present
         if (message.hasMedia) {
             const media = await message.downloadMedia();
             if (media) {
                 // Save media file
-                const fileName = `${bridgeId}_${media.filename || 'media'}`;
+                const fileName = `${Date.now()}_${media.filename || 'media'}`;
                 const filePath = path.join(uploadsDir, fileName);
 
                 // Write media to file
@@ -326,24 +327,21 @@ async function handleWhatsAppMessage(message) {
             await discordChannel.send(discordMessage);
         }
 
-        console.log(`✅ Message bridged to Discord with ID: ${bridgeId}`);
+        console.log(`✅ Message sent to Discord: ${discordMessage}`);
 
-        // Set timeout to collect responses
+        // Set timeout to collect responses and send back to WhatsApp
         setTimeout(async () => {
             await processCollectedResponses(bridgeId);
         }, CONFIG.messageTimeout);
 
     } catch (error) {
-        console.error('Error bridging message to Discord:', error);
+        console.error('Error sending message to Discord:', error);
         activeMessages.delete(bridgeId);
     }
 }
 
 // Handle Discord responses
 async function handleDiscordMessage(message) {
-    // Skip bot messages
-    if (message.author.bot) return;
-
     // Skip if not in bridge channel
     if (message.channel.id !== CONFIG.discordChannelId) return;
 
@@ -405,25 +403,29 @@ async function processCollectedResponses(bridgeId) {
 
         if (bridgeData.responses.length === 0) {
             // No responses received
-            await chat.sendMessage('⏰ *Keine Antworten in 2 Minuten erhalten.*');
+            await chat.sendMessage('⏰ *Keine Antworten in 30 Sekunden erhalten.*');
         } else {
             // Send each response back to WhatsApp
             for (const response of bridgeData.responses) {
-                let messageText = `**${response.author}**: ${response.content}`;
-
-                // Send text response
+                // Send text response without author formatting
                 if (response.content.trim()) {
-                    await chat.sendMessage(messageText);
+                    await chat.sendMessage(response.content);
                 }
 
                 // Send attachments
                 for (const attachment of response.attachments) {
                     try {
                         if (fs.existsSync(attachment.path)) {
-                            const media = MessageMedia.fromFilePath(attachment.path);
-                            await chat.sendMessage(media, {
-                                caption: `📎 ${attachment.name} (von ${response.author})`
-                            });
+                            // Check if it's a .txt file
+                            if (attachment.name.toLowerCase().endsWith('.txt')) {
+                                // Read and send the text content instead of the file
+                                const textContent = fs.readFileSync(attachment.path, 'utf8');
+                                await chat.sendMessage(textContent);
+                            } else {
+                                // Send other files normally
+                                const media = MessageMedia.fromFilePath(attachment.path);
+                                await chat.sendMessage(media);
+                            }
 
                             // Clean up file
                             fs.unlinkSync(attachment.path);
@@ -437,8 +439,6 @@ async function processCollectedResponses(bridgeId) {
                 // Small delay between messages
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
-
-            await chat.sendMessage(`✅ *${bridgeData.responses.length} Antwort(en) von Discord weitergeleitet.*`);
         }
     } catch (error) {
         console.error('Error processing responses:', error);
@@ -674,6 +674,7 @@ app.get('/dashboard', (req, res) => {
             <br>2. Suche nach "📱 WHATSAPP QR CODE" in den Logs
             <br>3. QR Code schnell scannen (läuft in 20 Sekunden ab!)
             <br>4. Bei Problemen: Seite neu laden um WhatsApp Client neu zu starten
+            <br>5. Bot sammelt jetzt 30 Sekunden Discord-Antworten (auch von anderen Bots)
         </div>
 
         <div id="status-container"></div>
@@ -689,6 +690,8 @@ app.get('/dashboard', (req, res) => {
                 <li>Klicke "Gerät verknüpfen"</li>
                 <li><a href="/qr" target="_blank">🔗 QR Code anzeigen</a> oder aus Vercel Logs</li>
                 <li>Bridge ist bereit! Nutze "${CONFIG.triggerChar}" vor Nachrichten</li>
+                <li>Spezial: "${CONFIG.triggerChar}ha" wird direkt als ".ha" gesendet</li>
+                <li>Bot sammelt 30 Sekunden lang Discord-Antworten (auch von anderen Bots)</li>
             </ol>
         </div>
     </div>
@@ -725,7 +728,7 @@ app.get('/dashboard', (req, res) => {
                         </div>
                         <div class="stat-card">
                             <h3>Timeout</h3>
-                            <p>\${data.bridge.config.timeoutMinutes} Min</p>
+                            <p>\${data.bridge.config.timeoutMinutes} Min (30s)</p>
                         </div>
                         <div class="stat-card">
                             <h3>Letzter Ping</h3>
