@@ -62,28 +62,19 @@ async function getPuppeteerConfig() {
             console.log('✅ Found Chromium at:', executablePath);
 
             return {
-                executablePath: executablePath,
-                headless: true,
-                args: [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--disable-gpu',
-                    '--single-process',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding',
-                    '--disable-extensions',
-                    '--disable-features=TranslateUI',
-                    '--disable-features=BlinkGenPropertyTrees',
-                    '--disable-ipc-flooding-protection'
-                ],
-                ignoreHTTPSErrors: true,
-                timeout: 60000, // Longer timeout
-                protocolTimeout: 60000
+    executablePath: executablePath,
+    headless: 'new',
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox', 
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--single-process'
+    ],
+    ignoreHTTPSErrors: true,
+    timeout: 90000,
+    protocolTimeout: 90000
+};
             };
         } catch (chromiumError) {
             console.error('❌ Chromium failed:', chromiumError.message);
