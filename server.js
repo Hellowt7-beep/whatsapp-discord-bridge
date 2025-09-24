@@ -45,6 +45,7 @@ let isWhatsAppReady = false;
 let isDiscordReady = false;
 let lastPing = Date.now();
 let serverStartTime = Date.now();
+let currentQRCode = null;
 
 // Use temp directory for uploads (Vercel-compatible)
 const uploadsDir = os.tmpdir();
@@ -54,17 +55,37 @@ async function getPuppeteerConfig() {
     if (CONFIG.isProduction) {
         // Production configuration for Vercel
         try {
+            const executablePath = await chromium.executablePath();
+            console.log('📦 Using Chromium from @sparticuz/chromium');
+
             return {
-                args: chromium.args,
+                args: [
+                    ...chromium.args,
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
+                    '--disable-setuid-sandbox',
+                    '--no-first-run',
+                    '--no-sandbox',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-extensions',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding'
+                ],
                 defaultViewport: chromium.defaultViewport,
-                executablePath: await chromium.executablePath(),
-                headless: chromium.headless,
-                ignoreHTTPSErrors: true
+                executablePath: executablePath,
+                headless: true,
+                ignoreHTTPSErrors: true,
+                timeout: 30000
             };
         } catch (error) {
-            console.log('Chromium not available, using fallback config');
+            console.error('❌ Chromium setup failed:', error);
+            console.log('🔄 Using fallback Puppeteer config...');
+
             return {
                 headless: true,
+                timeout: 30000,
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -83,6 +104,7 @@ async function getPuppeteerConfig() {
         // Development configuration
         return {
             headless: true,
+            timeout: 30000,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox'
@@ -94,26 +116,51 @@ async function getPuppeteerConfig() {
 // WhatsApp Client Setup
 async function initializeWhatsApp() {
     console.log('🔄 Initializing WhatsApp client...');
+    console.log('🚀 Environment: ' + (CONFIG.isProduction ? 'Production (Vercel)' : 'Development'));
 
-    const puppeteerConfig = await getPuppeteerConfig();
+    try {
+        const puppeteerConfig = await getPuppeteerConfig();
+        console.log('✅ Puppeteer config ready');
 
-    // Session path for Vercel (always use temp dir)
-    const sessionPath = path.join(os.tmpdir(), 'whatsapp-session');
+        // Session path for Vercel (always use temp dir)
+        const sessionPath = path.join(os.tmpdir(), 'whatsapp-session');
+        console.log('📁 Session path:', sessionPath);
 
-    whatsappClient = new Client({
-        authStrategy: new LocalAuth({
-            clientId: CONFIG.sessionName,
-            dataPath: sessionPath
-        }),
-        puppeteer: puppeteerConfig
-    });
+        whatsappClient = new Client({
+            authStrategy: new LocalAuth({
+                clientId: CONFIG.sessionName,
+                dataPath: sessionPath
+            }),
+            puppeteer: puppeteerConfig,
+            webVersionCache: {
+                type: 'remote',
+                remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+            }
+        });
 
-    whatsappClient.on('qr', (qr) => {
-        console.log('📱 WhatsApp QR Code:');
-        qrcode.generate(qr, { small: true });
-        console.log('💡 Scan this QR code with your WhatsApp (Dual Account recommended)');
-        console.log('🔗 Or visit: https://your-app.vercel.app/dashboard to see status');
-    });
+        whatsappClient.on('qr', (qr) => {
+            console.log('\n' + '='.repeat(60));
+            console.log('📱 WHATSAPP QR CODE - JETZT SCANNEN!');
+            console.log('='.repeat(60));
+            try {
+                qrcode.generate(qr, { small: true });
+            } catch (qrError) {
+                console.log('QR Code String:', qr);
+            }
+            console.log('💡 1. WhatsApp öffnen → Menü → "Verknüpfte Geräte"');
+            console.log('💡 2. "Gerät verknüpfen" → QR Code scannen');
+            console.log('💡 3. QR Code läuft in 20 Sekunden ab!');
+            console.log('🔗 QR Code auch verfügbar unter: /qr');
+            console.log('='.repeat(60) + '\n');
+
+            // Store QR code for web display
+            currentQRCode = qr;
+
+            // Clear QR code after 20 seconds
+            setTimeout(() => {
+                currentQRCode = null;
+            }, 20000);
+        });
 
     whatsappClient.on('ready', () => {
         console.log('✅ WhatsApp client is ready!');
@@ -148,13 +195,19 @@ async function initializeWhatsApp() {
         }
     });
 
-    whatsappClient.initialize().catch(error => {
-        console.error('Failed to initialize WhatsApp client:', error);
+        console.log('🚀 Starting WhatsApp client initialization...');
+        await whatsappClient.initialize();
+
+    } catch (error) {
+        console.error('❌ Failed to initialize WhatsApp client:', error);
+        console.error('Error details:', error.message);
+
+        // Retry with delay
         setTimeout(() => {
-            console.log('🔄 Retrying WhatsApp initialization...');
+            console.log('🔄 Retrying WhatsApp initialization in 15 seconds...');
             initializeWhatsApp();
-        }, 10000);
-    });
+        }, 15000);
+    }
 }
 
 // Discord Client Setup
@@ -416,7 +469,7 @@ app.get('/', (req, res) => {
         activeMessages: activeMessages.size,
         uptime: Math.floor((Date.now() - serverStartTime) / 1000),
         lastPing: new Date(lastPing).toISOString(),
-        version: '2.1.0'
+        version: '2.2.0'
     });
 });
 
@@ -470,6 +523,118 @@ app.get('/status', (req, res) => {
 });
 
 // Dashboard route
+// QR Code display route
+app.get('/qr', (req, res) => {
+    if (!currentQRCode) {
+        res.send(`
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp QR Code</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f5f5f5; }
+        .container { max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; }
+        .status { padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 10px; color: #856404; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 WhatsApp QR Code</h1>
+        <div class="status">
+            <strong>⏳ Kein QR Code verfügbar</strong>
+            <br><br>
+            WhatsApp ist bereits verbunden oder wird gerade initialisiert.
+            <br><br>
+            <a href="/dashboard">← Zurück zum Dashboard</a>
+        </div>
+    </div>
+    <script>
+        setTimeout(() => location.reload(), 5000);
+    </script>
+</body>
+</html>
+        `);
+        return;
+    }
+
+    // Generate QR code as data URL for web display
+    import('qrcode').then(QRCode => {
+        QRCode.toDataURL(currentQRCode, { width: 256, margin: 2 })
+            .then(qrDataURL => {
+                res.send(`
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp QR Code</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .container { max-width: 400px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); }
+        .qr-code { margin: 20px 0; }
+        .instructions { background: #e7f3ff; padding: 15px; border-radius: 10px; margin: 20px 0; }
+        .timer { color: #dc3545; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📱 WhatsApp QR Code</h1>
+
+        <div class="qr-code">
+            <img src="${qrDataURL}" alt="WhatsApp QR Code" style="max-width: 100%; height: auto;">
+        </div>
+
+        <div class="instructions">
+            <strong>📋 Anleitung:</strong>
+            <ol style="text-align: left;">
+                <li>WhatsApp öffnen</li>
+                <li>Menü → "Verknüpfte Geräte"</li>
+                <li>"Gerät verknüpfen"</li>
+                <li>QR Code scannen</li>
+            </ol>
+        </div>
+
+        <div class="timer" id="timer">
+            ⏱️ QR Code läuft in <span id="countdown">20</span> Sekunden ab
+        </div>
+
+        <br>
+        <a href="/dashboard">← Zurück zum Dashboard</a>
+    </div>
+
+    <script>
+        let countdown = 20;
+        const timer = setInterval(() => {
+            countdown--;
+            document.getElementById('countdown').textContent = countdown;
+            if (countdown <= 0) {
+                clearInterval(timer);
+                location.reload();
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
+                `);
+            })
+            .catch(err => {
+                res.send(`
+<!DOCTYPE html>
+<html><body style="text-align: center; padding: 50px;">
+<h1>QR Code Error</h1>
+<p>Fehler beim Generieren des QR Codes: ${err.message}</p>
+<p>QR String: <code>${currentQRCode}</code></p>
+<a href="/dashboard">← Zurück zum Dashboard</a>
+</body></html>
+                `);
+            });
+    }).catch(err => {
+        res.send(`QR Code Error: ${err.message}\n\nQR String: ${currentQRCode}`);
+    });
+});
+
 app.get('/dashboard', (req, res) => {
     res.send(`
 <!DOCTYPE html>
@@ -503,7 +668,11 @@ app.get('/dashboard', (req, res) => {
         </div>
 
         <div class="alert">
-            <strong>💡 QR Code Hinweis:</strong> Falls WhatsApp offline ist, prüfe die Vercel Logs für den QR Code zum Scannen.
+            <strong>💡 QR Code Hinweis:</strong>
+            <br>1. WhatsApp offline? → Vercel Dashboard → Functions → "View Function Logs"
+            <br>2. Suche nach "📱 WHATSAPP QR CODE" in den Logs
+            <br>3. QR Code schnell scannen (läuft in 20 Sekunden ab!)
+            <br>4. Bei Problemen: Seite neu laden um WhatsApp Client neu zu starten
         </div>
 
         <div id="status-container"></div>
@@ -517,7 +686,7 @@ app.get('/dashboard', (req, res) => {
             <ol>
                 <li>Öffne WhatsApp → Menü → "Verknüpfte Geräte"</li>
                 <li>Klicke "Gerät verknüpfen"</li>
-                <li>Scanne den QR Code aus den Vercel Logs</li>
+                <li><a href="/qr" target="_blank">🔗 QR Code anzeigen</a> oder aus Vercel Logs</li>
                 <li>Bridge ist bereit! Nutze "${CONFIG.triggerChar}" vor Nachrichten</li>
             </ol>
         </div>
