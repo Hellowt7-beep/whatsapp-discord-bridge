@@ -50,42 +50,20 @@ let currentQRCode = null;
 // Use temp directory for uploads (Vercel-compatible)
 const uploadsDir = os.tmpdir();
 
-// Improved Puppeteer configuration for Vercel
+// Simplified Puppeteer configuration for Vercel
 async function getPuppeteerConfig() {
     if (CONFIG.isProduction) {
-        // Production configuration for Vercel
+        // Try different approaches for Vercel
+        console.log('🔄 Trying Vercel-optimized Puppeteer config...');
+
+        // First try: @sparticuz/chromium
         try {
             const executablePath = await chromium.executablePath();
-            console.log('📦 Using Chromium from @sparticuz/chromium');
+            console.log('✅ Found Chromium at:', executablePath);
 
             return {
-                args: [
-                    ...chromium.args,
-                    '--disable-gpu',
-                    '--disable-dev-shm-usage',
-                    '--disable-setuid-sandbox',
-                    '--no-first-run',
-                    '--no-sandbox',
-                    '--no-zygote',
-                    '--single-process',
-                    '--disable-extensions',
-                    '--disable-background-timer-throttling',
-                    '--disable-backgrounding-occluded-windows',
-                    '--disable-renderer-backgrounding'
-                ],
-                defaultViewport: chromium.defaultViewport,
                 executablePath: executablePath,
                 headless: true,
-                ignoreHTTPSErrors: true,
-                timeout: 30000
-            };
-        } catch (error) {
-            console.error('❌ Chromium setup failed:', error);
-            console.log('🔄 Using fallback Puppeteer config...');
-
-            return {
-                headless: true,
-                timeout: 30000,
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -93,22 +71,45 @@ async function getPuppeteerConfig() {
                     '--disable-accelerated-2d-canvas',
                     '--no-first-run',
                     '--no-zygote',
+                    '--disable-gpu',
                     '--single-process',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-extensions',
+                    '--disable-features=TranslateUI',
+                    '--disable-features=BlinkGenPropertyTrees',
+                    '--disable-ipc-flooding-protection'
+                ],
+                ignoreHTTPSErrors: true,
+                timeout: 60000, // Longer timeout
+                protocolTimeout: 60000
+            };
+        } catch (chromiumError) {
+            console.error('❌ Chromium failed:', chromiumError.message);
+
+            // Fallback: System chromium (if available)
+            console.log('🔄 Trying fallback config...');
+            return {
+                headless: true,
+                timeout: 60000,
+                protocolTimeout: 60000,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
                     '--disable-gpu',
                     '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor'
+                    '--disable-features=VizDisplayCompositor',
+                    '--single-process'
                 ]
             };
         }
     } else {
-        // Development configuration
         return {
             headless: true,
             timeout: 30000,
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox'
-            ]
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
         };
     }
 }
