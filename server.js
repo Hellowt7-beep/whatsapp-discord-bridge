@@ -569,13 +569,21 @@ setInterval(() => {
     }
 }, 60 * 60 * 1000);
 
-// Start server
-const server = app.listen(CONFIG.port, () => {
-    console.log(`🌐 Server running on port ${CONFIG.port}`);
-    console.log(`📊 Dashboard: https://your-app.vercel.app/dashboard`);
-    console.log(`🔗 Health: https://your-app.vercel.app/health`);
-    console.log(`🏓 Ping: https://your-app.vercel.app/ping`);
-});
+// Start server only in development
+let server;
+if (!CONFIG.isProduction) {
+    server = app.listen(CONFIG.port, () => {
+        console.log(`🌐 Server running on port ${CONFIG.port}`);
+        console.log(`📊 Dashboard: http://localhost:${CONFIG.port}/dashboard`);
+        console.log(`🔗 Health: http://localhost:${CONFIG.port}/health`);
+        console.log(`🏓 Ping: http://localhost:${CONFIG.port}/ping`);
+    });
+} else {
+    console.log(`🌐 Vercel serverless function initialized`);
+    console.log(`📊 Dashboard: /dashboard`);
+    console.log(`🔗 Health: /health`);
+    console.log(`🏓 Ping: /ping`);
+}
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
@@ -586,7 +594,9 @@ process.on('SIGINT', async () => {
     if (discordClient) {
         await discordClient.destroy();
     }
-    server.close();
+    if (server) {
+        server.close();
+    }
     process.exit(0);
 });
 
@@ -598,7 +608,9 @@ process.on('SIGTERM', async () => {
     if (discordClient) {
         await discordClient.destroy();
     }
-    server.close();
+    if (server) {
+        server.close();
+    }
     process.exit(0);
 });
 
