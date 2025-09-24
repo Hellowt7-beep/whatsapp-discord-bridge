@@ -12,6 +12,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import chromium from '@sparticuz/chromium';
 import puppeteer from 'puppeteer-core';
+import os from 'os';
 
 // ES Module setup
 const __filename = fileURLToPath(import.meta.url);
@@ -45,9 +46,9 @@ let isDiscordReady = false;
 let lastPing = Date.now();
 let serverStartTime = Date.now();
 
-// Create uploads directory
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) {
+// Create uploads directory (Vercel-compatible)
+const uploadsDir = CONFIG.isProduction ? os.tmpdir() : path.join(__dirname, 'uploads');
+if (!CONFIG.isProduction && !fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
@@ -99,10 +100,13 @@ async function initializeWhatsApp() {
 
     const puppeteerConfig = await getPuppeteerConfig();
 
+    // Session path for Vercel
+    const sessionPath = CONFIG.isProduction ? path.join(os.tmpdir(), 'whatsapp-session') : './whatsapp-session';
+
     whatsappClient = new Client({
         authStrategy: new LocalAuth({
             clientId: CONFIG.sessionName,
-            dataPath: './whatsapp-session'
+            dataPath: sessionPath
         }),
         puppeteer: puppeteerConfig
     });
@@ -631,4 +635,5 @@ process.on('uncaughtException', (error) => {
 });
 
 export default app;
+
 
