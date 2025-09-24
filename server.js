@@ -10,6 +10,8 @@ import FormData from 'form-data';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import chromium from '@sparticuz/chromium';
+import puppeteer from 'puppeteer-core';
 
 // ES Module setup
 const __filename = fileURLToPath(import.meta.url);
@@ -50,31 +52,19 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 // Improved Puppeteer configuration for Vercel
-function getPuppeteerConfig() {
+async function getPuppeteerConfig() {
     if (CONFIG.isProduction) {
         // Production configuration for Vercel
         try {
-            const chromium = require('chrome-aws-lambda');
             return {
-                args: [
-                    ...chromium.args,
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--no-first-run',
-                    '--no-zygote',
-                    '--single-process',
-                    '--disable-gpu',
-                    '--disable-web-security',
-                    '--disable-features=VizDisplayCompositor'
-                ],
+                args: chromium.args,
                 defaultViewport: chromium.defaultViewport,
-                executablePath: chromium.executablePath,
-                headless: chromium.headless
+                executablePath: await chromium.executablePath(),
+                headless: chromium.headless,
+                ignoreHTTPSErrors: true
             };
         } catch (error) {
-            console.log('Chrome AWS Lambda not available, using fallback config');
+            console.log('Chromium not available, using fallback config');
             return {
                 headless: true,
                 args: [
@@ -104,10 +94,10 @@ function getPuppeteerConfig() {
 }
 
 // WhatsApp Client Setup
-function initializeWhatsApp() {
+async function initializeWhatsApp() {
     console.log('🔄 Initializing WhatsApp client...');
 
-    const puppeteerConfig = getPuppeteerConfig();
+    const puppeteerConfig = await getPuppeteerConfig();
 
     whatsappClient = new Client({
         authStrategy: new LocalAuth({
@@ -629,3 +619,4 @@ process.on('uncaughtException', (error) => {
 });
 
 export default app;
+
