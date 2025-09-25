@@ -62,19 +62,28 @@ async function getPuppeteerConfig() {
             console.log('✅ Found Chromium at:', executablePath);
 
             return {
-    executablePath: executablePath,
-    headless: 'new',
-    args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox', 
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--single-process'
-    ],
-    ignoreHTTPSErrors: true,
-    timeout: 90000,
-    protocolTimeout: 90000
-};
+                executablePath: executablePath,
+                headless: true,
+                args: [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--disable-gpu',
+                    '--single-process',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-extensions',
+                    '--disable-features=TranslateUI',
+                    '--disable-features=BlinkGenPropertyTrees',
+                    '--disable-ipc-flooding-protection'
+                ],
+                ignoreHTTPSErrors: true,
+                timeout: 60000, // Longer timeout
+                protocolTimeout: 60000
             };
         } catch (chromiumError) {
             console.error('❌ Chromium failed:', chromiumError.message);
@@ -134,23 +143,16 @@ async function initializeWhatsApp() {
             console.log('\n' + '='.repeat(60));
             console.log('📱 WHATSAPP QR CODE - JETZT SCANNEN!');
             console.log('='.repeat(60));
-
-            // WICHTIG: QR String für manuelle Konvertierung
-            console.log('🔥 QR CODE STRING (kopieren für manuelle Konvertierung):');
-            console.log(qr);
-            console.log('🔥 Ende QR String');
-
             try {
                 qrcode.generate(qr, { small: true });
             } catch (qrError) {
-                console.log('QR Terminal Error, aber String verfügbar:', qr);
+                console.log('QR Code String:', qr);
             }
-
             console.log('💡 1. WhatsApp öffnen → Menü → "Verknüpfte Geräte"');
             console.log('💡 2. "Gerät verknüpfen" → QR Code scannen');
             console.log('💡 3. QR Code läuft in 20 Sekunden ab!');
             console.log('🔗 QR Code auch verfügbar unter: /qr');
-            console.log('🔗 Manuell: Kopiere QR String und gehe zu qr-generator.org');
+            console.log('⚡ Bot sammelt jetzt 30 Sekunden Discord-Antworten (auch von Bots)');
             console.log('='.repeat(60) + '\n');
 
             // Store QR code for web display
@@ -523,23 +525,6 @@ app.get('/status', (req, res) => {
 
 // Dashboard route
 // QR Code display route
-// QR Code als Text ausgeben
-app.get('/qr-string', (req, res) => {
-    if (!currentQRCode) {
-        res.json({
-            error: 'Kein QR Code verfügbar',
-            status: 'WhatsApp bereits verbunden oder wird initialisiert'
-        });
-        return;
-    }
-
-    res.json({
-        qrString: currentQRCode,
-        instruction: 'Kopiere diesen String und gehe zu qr-generator.org oder qr-code-generator.com',
-        expiresIn: '20 Sekunden'
-    });
-});
-
 app.get('/qr', (req, res) => {
     if (!currentQRCode) {
         res.send(`
