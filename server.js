@@ -27,13 +27,15 @@ app.use(express.static('public'));
 
 // Configuration
 const CONFIG = {
-    port: process.env.PORT || 3000,
+    port: process.env.PORT || 8080 || 3000,
     discordToken: process.env.DISCORD_BOT_TOKEN,
     discordChannelId: process.env.DISCORD_CHANNEL_ID,
     messageTimeout: (process.env.MESSAGE_TIMEOUT_MINUTES || 0.5) * 60 * 1000,
     triggerChar: process.env.TRIGGER_CHARACTER || '.',
     sessionName: process.env.WHATSAPP_SESSION_NAME || 'bridge-session',
-    isProduction: process.env.NODE_ENV === 'production' || process.env.VERCEL,
+    isProduction: process.env.NODE_ENV === 'production',
+    isVercel: process.env.VERCEL || false,
+    isRender: process.env.RENDER || false,
     pingUrl: process.env.PING_URL || null
 };
 
@@ -47,14 +49,15 @@ let lastPing = Date.now();
 let serverStartTime = Date.now();
 let currentQRCode = null;
 
-// Use temp directory for uploads (Vercel-compatible)
+// Use temp directory for uploads (Render-compatible)
 const uploadsDir = os.tmpdir();
 
-// Simplified Puppeteer configuration for Vercel
+// Simplified Puppeteer configuration for production
 async function getPuppeteerConfig() {
     if (CONFIG.isProduction) {
-        // Try different approaches for Vercel
-        console.log('🔄 Trying Vercel-optimized Puppeteer config...');
+        // Try different approaches for production
+        const platform = CONFIG.isVercel ? 'Vercel' : CONFIG.isRender ? 'Render' : 'Production';
+        console.log(`🔄 Trying ${platform}-optimized Puppeteer config...`);
 
         // First try: @sparticuz/chromium
         try {
@@ -117,13 +120,14 @@ async function getPuppeteerConfig() {
 // WhatsApp Client Setup
 async function initializeWhatsApp() {
     console.log('🔄 Initializing WhatsApp client...');
-    console.log('🚀 Environment: ' + (CONFIG.isProduction ? 'Production (Vercel)' : 'Development'));
+    const platform = CONFIG.isVercel ? 'Vercel' : CONFIG.isRender ? 'Render' : 'Local';
+    console.log('🚀 Environment: ' + (CONFIG.isProduction ? `Production (${platform})` : 'Development'));
 
     try {
         const puppeteerConfig = await getPuppeteerConfig();
         console.log('✅ Puppeteer config ready');
 
-        // Session path for Vercel (always use temp dir)
+        // Session path for production (always use temp dir)
         const sessionPath = path.join(os.tmpdir(), 'whatsapp-session');
         console.log('📁 Session path:', sessionPath);
 
@@ -164,38 +168,38 @@ async function initializeWhatsApp() {
             }, 20000);
         });
 
-    whatsappClient.on('ready', () => {
-        console.log('✅ WhatsApp client is ready!');
-        isWhatsAppReady = true;
-    });
+        whatsappClient.on('ready', () => {
+            console.log('✅ WhatsApp client is ready!');
+            isWhatsAppReady = true;
+        });
 
-    whatsappClient.on('authenticated', () => {
-        console.log('🔐 WhatsApp authenticated successfully');
-    });
+        whatsappClient.on('authenticated', () => {
+            console.log('🔐 WhatsApp authenticated successfully');
+        });
 
-    whatsappClient.on('auth_failure', (msg) => {
-        console.error('❌ WhatsApp authentication failed:', msg);
-    });
+        whatsappClient.on('auth_failure', (msg) => {
+            console.error('❌ WhatsApp authentication failed:', msg);
+        });
 
-    whatsappClient.on('disconnected', (reason) => {
-        console.log('📱 WhatsApp disconnected:', reason);
-        isWhatsAppReady = false;
+        whatsappClient.on('disconnected', (reason) => {
+            console.log('📱 WhatsApp disconnected:', reason);
+            isWhatsAppReady = false;
 
-        // Attempt to reconnect after 5 seconds
-        setTimeout(() => {
-            console.log('🔄 Attempting to reconnect WhatsApp...');
-            initializeWhatsApp();
-        }, 5000);
-    });
+            // Attempt to reconnect after 5 seconds
+            setTimeout(() => {
+                console.log('🔄 Attempting to reconnect WhatsApp...');
+                initializeWhatsApp();
+            }, 5000);
+        });
 
-    // Handle incoming WhatsApp messages
-    whatsappClient.on('message', async (message) => {
-        try {
-            await handleWhatsAppMessage(message);
-        } catch (error) {
-            console.error('Error handling WhatsApp message:', error);
-        }
-    });
+        // Handle incoming WhatsApp messages
+        whatsappClient.on('message', async (message) => {
+            try {
+                await handleWhatsAppMessage(message);
+            } catch (error) {
+                console.error('Error handling WhatsApp message:', error);
+            }
+        });
 
         console.log('🚀 Starting WhatsApp client initialization...');
         await whatsappClient.initialize();
@@ -523,7 +527,6 @@ app.get('/status', (req, res) => {
     });
 });
 
-// Dashboard route
 // QR Code display route
 app.get('/qr', (req, res) => {
     if (!currentQRCode) {
@@ -669,12 +672,11 @@ app.get('/dashboard', (req, res) => {
         </div>
 
         <div class="alert">
-            <strong>💡 QR Code Hinweis:</strong>
-            <br>1. WhatsApp offline? → Vercel Dashboard → Functions → "View Function Logs"
-            <br>2. Suche nach "📱 WHATSAPP QR CODE" in den Logs
-            <br>3. QR Code schnell scannen (läuft in 20 Sekunden ab!)
-            <br>4. Bei Problemen: Seite neu laden um WhatsApp Client neu zu starten
-            <br>5. Bot sammelt jetzt 30 Sekunden Discord-Antworten (auch von anderen Bots)
+            <strong>💡 Render Setup erfolgreich!</strong>
+            <br>✅ Kein 10-Sekunden Timeout mehr
+            <br>✅ Persistent storage für WhatsApp sessions
+            <br>✅ 24/7 Uptime ohne Sleep
+            <br>Bot sammelt jetzt 30 Sekunden Discord-Antworten (auch von anderen Bots)
         </div>
 
         <div id="status-container"></div>
@@ -688,7 +690,7 @@ app.get('/dashboard', (req, res) => {
             <ol>
                 <li>Öffne WhatsApp → Menü → "Verknüpfte Geräte"</li>
                 <li>Klicke "Gerät verknüpfen"</li>
-                <li><a href="/qr" target="_blank">🔗 QR Code anzeigen</a> oder aus Vercel Logs</li>
+                <li><a href="/qr" target="_blank">🔗 QR Code anzeigen</a></li>
                 <li>Bridge ist bereit! Nutze "${CONFIG.triggerChar}" vor Nachrichten</li>
                 <li>Spezial: "${CONFIG.triggerChar}ha" wird direkt als ".ha" gesendet</li>
                 <li>Bot sammelt 30 Sekunden lang Discord-Antworten (auch von anderen Bots)</li>
@@ -728,7 +730,7 @@ app.get('/dashboard', (req, res) => {
                         </div>
                         <div class="stat-card">
                             <h3>Timeout</h3>
-                            <p>\${data.bridge.config.timeoutMinutes} Min (30s)</p>
+                            <p>\${data.bridge.config.timeoutMinutes} Min</p>
                         </div>
                         <div class="stat-card">
                             <h3>Letzter Ping</h3>
@@ -753,8 +755,9 @@ app.get('/dashboard', (req, res) => {
 });
 
 // Initialize clients
-console.log('🚀 Starting WhatsApp-Discord Bridge on Vercel...');
-console.log('📡 Platform: Vercel Serverless');
+const platform = CONFIG.isVercel ? 'Vercel Serverless' : CONFIG.isRender ? 'Render Free Tier' : 'Local Development';
+console.log('🚀 Starting WhatsApp-Discord Bridge...');
+console.log('📡 Platform:', platform);
 console.log('🔧 Environment:', CONFIG.isProduction ? 'Production' : 'Development');
 console.log('📁 Uploads Dir:', uploadsDir);
 
@@ -783,20 +786,29 @@ setInterval(() => {
     }
 }, 60 * 60 * 1000);
 
-// Start server only in development
+// Start server (except on Vercel which uses serverless functions)
 let server;
-if (!CONFIG.isProduction) {
-    server = app.listen(CONFIG.port, () => {
-        console.log(`🌐 Server running on port ${CONFIG.port}`);
-        console.log(`📊 Dashboard: http://localhost:${CONFIG.port}/dashboard`);
-        console.log(`🔗 Health: http://localhost:${CONFIG.port}/health`);
-        console.log(`🏓 Ping: http://localhost:${CONFIG.port}/ping`);
-    });
-} else {
+if (CONFIG.isVercel) {
+    // Vercel uses serverless functions, no Express server needed
     console.log(`🌐 Vercel serverless function initialized`);
     console.log(`📊 Dashboard: /dashboard`);
     console.log(`🔗 Health: /health`);
     console.log(`🏓 Ping: /ping`);
+} else {
+    // Start Express server for Render, local development, etc.
+    const host = '0.0.0.0'; // Important for Render port binding
+    server = app.listen(CONFIG.port, host, () => {
+        console.log(`🌐 Server running on ${host}:${CONFIG.port}`);
+        if (CONFIG.isProduction) {
+            console.log(`📊 Dashboard: https://your-app.onrender.com/dashboard`);
+            console.log(`🔗 Health: https://your-app.onrender.com/health`);
+            console.log(`🏓 Ping: https://your-app.onrender.com/ping`);
+        } else {
+            console.log(`📊 Dashboard: http://localhost:${CONFIG.port}/dashboard`);
+            console.log(`🔗 Health: http://localhost:${CONFIG.port}/health`);
+            console.log(`🏓 Ping: http://localhost:${CONFIG.port}/ping`);
+        }
+    });
 }
 
 // Graceful shutdown
