@@ -387,7 +387,7 @@ async function handleDiscordMessage(message) {
 
                 // Send text response immediately
                 if (message.content.trim()) {
-                    await chat.sendMessage(`🤖 ${message.content}`);
+                    await chat.sendMessage(message.content);
                     console.log(`✅ Text response sent to ${bridgeData.isGroup ? 'group' : 'private chat'}: ${message.content}`);
                 }
 
@@ -409,11 +409,11 @@ async function handleDiscordMessage(message) {
                             if (attachment.name.toLowerCase().endsWith('.txt')) {
                                 // Read and send the text content instead of the file
                                 const textContent = fs.readFileSync(filePath, 'utf8');
-                                await chat.sendMessage(`🤖 ${textContent}`);
+                                await chat.sendMessage(textContent);
                             } else {
                                 // Send other files normally
                                 const media = MessageMedia.fromFilePath(filePath);
-                                await chat.sendMessage(media, { caption: '🤖 Datei von Discord' });
+                                await chat.sendMessage(media);
                             }
 
                             console.log(`✅ Attachment sent to ${bridgeData.isGroup ? 'group' : 'private chat'}: ${attachment.name}`);
@@ -858,4 +858,3 @@ process.on('uncaughtException', (error) => {
 });
 
 export default app;
-
