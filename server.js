@@ -267,25 +267,35 @@ async function handleWhatsAppMessage(message) {
         return;
     }
 
-    console.log(`📨 WhatsApp message received: ${message.body}`);
+    console.log(`📨 WhatsApp message received from ${message.from}: ${message.body}`);
 
     // Use the complete message content (keep trigger character)
     const content = message.body.trim();
     if (!content) return;
 
-    // Get chat info
+    // Get chat info - this is crucial for group vs private chat handling
     const chat = await message.getChat();
     const contact = await message.getContact();
+
+    // Debug logging to understand chat context
+    console.log(`📍 Chat Type: ${chat.isGroup ? 'GROUP' : 'PRIVATE'}`);
+    console.log(`📍 Chat ID: ${chat.id._serialized}`);
+    if (chat.isGroup) {
+        console.log(`📍 Group Name: ${chat.name}`);
+        console.log(`📍 Message Author: ${message.author || 'Unknown'}`);
+    }
 
     // Create bridge message ID for response collection
     const bridgeId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Store message info for live bridging
+    // Store message info for live bridging - use chat.id._serialized for proper group handling
     activeMessages.set(bridgeId, {
-        whatsappChatId: message.from,
+        whatsappChatId: chat.id._serialized, // Use the actual chat ID, not message.from
         whatsappChat: chat,
         originalMessage: message,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        isGroup: chat.isGroup,
+        groupName: chat.isGroup ? chat.name : null
     });
 
     try {
@@ -296,8 +306,17 @@ async function handleWhatsAppMessage(message) {
             return;
         }
 
-        // Send the message content directly to Discord
+        // Create a more informative Discord message with context
         let discordMessage = content;
+
+        // Add context for group messages
+        if (chat.isGroup) {
+            const senderName = contact.pushname || contact.name || message.author || 'Unknown';
+            discordMessage = `**[${chat.name}]** ${senderName}: ${content}`;
+        } else {
+            const senderName = contact.pushname || contact.name || 'Unknown';
+            discordMessage = `**[Privat]** ${senderName}: ${content}`;
+        }
 
         // Handle media if present
         if (message.hasMedia) {
@@ -351,7 +370,7 @@ async function handleDiscordMessage(message) {
     // Skip bot's own messages
     if (message.author.id === discordClient.user.id) return;
 
-    console.log(`📨 Discord response received: ${message.content}`);
+    console.log(`📨 Discord response received from ${message.author.username}: ${message.content}`);
 
     // Find active bridge messages to respond to
     for (const [bridgeId, bridgeData] of activeMessages.entries()) {
@@ -362,9 +381,14 @@ async function handleDiscordMessage(message) {
             try {
                 const chat = bridgeData.whatsappChat;
 
+                // Debug logging for response routing
+                console.log(`📤 Sending response to ${bridgeData.isGroup ? 'GROUP' : 'PRIVATE'} chat: ${bridgeData.isGroup ? bridgeData.groupName : 'Private Chat'}`);
+                console.log(`📤 Chat ID: ${bridgeData.whatsappChatId}`);
+
                 // Send text response immediately
                 if (message.content.trim()) {
-                    await chat.sendMessage(message.content);
+                    await chat.sendMessage(`🤖 ${message.content}`);
+                    console.log(`✅ Text response sent to ${bridgeData.isGroup ? 'group' : 'private chat'}: ${message.content}`);
                 }
 
                 // Handle attachments immediately
@@ -385,12 +409,14 @@ async function handleDiscordMessage(message) {
                             if (attachment.name.toLowerCase().endsWith('.txt')) {
                                 // Read and send the text content instead of the file
                                 const textContent = fs.readFileSync(filePath, 'utf8');
-                                await chat.sendMessage(textContent);
+                                await chat.sendMessage(`🤖 ${textContent}`);
                             } else {
                                 // Send other files normally
                                 const media = MessageMedia.fromFilePath(filePath);
-                                await chat.sendMessage(media);
+                                await chat.sendMessage(media, { caption: '🤖 Datei von Discord' });
                             }
+
+                            console.log(`✅ Attachment sent to ${bridgeData.isGroup ? 'group' : 'private chat'}: ${attachment.name}`);
 
                             // Clean up file immediately after sending
                             if (fs.existsSync(filePath)) {
@@ -403,10 +429,13 @@ async function handleDiscordMessage(message) {
                     }
                 }
 
-                console.log(`✅ Live response forwarded to WhatsApp`);
-
             } catch (error) {
                 console.error('Error forwarding response to WhatsApp:', error);
+                console.error('Bridge data:', {
+                    chatId: bridgeData.whatsappChatId,
+                    isGroup: bridgeData.isGroup,
+                    groupName: bridgeData.groupName
+                });
             }
             break;
         }
@@ -829,5 +858,4 @@ process.on('uncaughtException', (error) => {
 });
 
 export default app;
-
 
