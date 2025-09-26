@@ -306,17 +306,8 @@ async function handleWhatsAppMessage(message) {
             return;
         }
 
-        // Create a more informative Discord message with context
+        // Send pure content to Discord without any additions
         let discordMessage = content;
-
-        // Add context for group messages
-        if (chat.isGroup) {
-            const senderName = contact.pushname || contact.name || message.author || 'Unknown';
-            discordMessage = `**[${chat.name}]** ${senderName}: ${content}`;
-        } else {
-            const senderName = contact.pushname || contact.name || 'Unknown';
-            discordMessage = `**[Privat]** ${senderName}: ${content}`;
-        }
 
         // Handle media if present
         if (message.hasMedia) {
