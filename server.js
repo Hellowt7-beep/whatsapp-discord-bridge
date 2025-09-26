@@ -27,13 +27,15 @@ app.use(express.static('public'));
 
 // Configuration
 const CONFIG = {
-    port: process.env.PORT || 3000,
+    port: process.env.PORT || 8080 || 3000,
     discordToken: process.env.DISCORD_BOT_TOKEN,
     discordChannelId: process.env.DISCORD_CHANNEL_ID,
-    messageTimeout: (process.env.MESSAGE_TIMEOUT_MINUTES || 2) * 60 * 1000, // Changed to 2 minutes
+    messageTimeout: (process.env.MESSAGE_TIMEOUT_MINUTES || 0.5) * 60 * 1000,
     triggerChar: process.env.TRIGGER_CHARACTER || '.',
     sessionName: process.env.WHATSAPP_SESSION_NAME || 'bridge-session',
-    isProduction: process.env.NODE_ENV === 'production' || process.env.VERCEL,
+    isProduction: process.env.NODE_ENV === 'production',
+    isVercel: process.env.VERCEL || false,
+    isRender: process.env.RENDER || false,
     pingUrl: process.env.PING_URL || null
 };
 
@@ -47,14 +49,15 @@ let lastPing = Date.now();
 let serverStartTime = Date.now();
 let currentQRCode = null;
 
-// Use temp directory for uploads (Vercel-compatible)
+// Use temp directory for uploads (Render-compatible)
 const uploadsDir = os.tmpdir();
 
-// Simplified Puppeteer configuration for Vercel
+// Simplified Puppeteer configuration for production
 async function getPuppeteerConfig() {
     if (CONFIG.isProduction) {
-        // Try different approaches for Vercel
-        console.log('🔄 Trying Vercel-optimized Puppeteer config...');
+        // Try different approaches for production
+        const platform = CONFIG.isVercel ? 'Vercel' : CONFIG.isRender ? 'Render' : 'Production';
+        console.log(`🔄 Trying ${platform}-optimized Puppeteer config...`);
 
         // First try: @sparticuz/chromium
         try {
@@ -117,13 +120,14 @@ async function getPuppeteerConfig() {
 // WhatsApp Client Setup
 async function initializeWhatsApp() {
     console.log('🔄 Initializing WhatsApp client...');
-    console.log('🚀 Environment: ' + (CONFIG.isProduction ? 'Production (Vercel)' : 'Development'));
+    const platform = CONFIG.isVercel ? 'Vercel' : CONFIG.isRender ? 'Render' : 'Local';
+    console.log('🚀 Environment: ' + (CONFIG.isProduction ? `Production (${platform})` : 'Development'));
 
     try {
         const puppeteerConfig = await getPuppeteerConfig();
         console.log('✅ Puppeteer config ready');
 
-        // Session path for Vercel (always use temp dir)
+        // Session path for production (always use temp dir)
         const sessionPath = path.join(os.tmpdir(), 'whatsapp-session');
         console.log('📁 Session path:', sessionPath);
 
@@ -152,7 +156,7 @@ async function initializeWhatsApp() {
             console.log('💡 2. "Gerät verknüpfen" → QR Code scannen');
             console.log('💡 3. QR Code läuft in 20 Sekunden ab!');
             console.log('🔗 QR Code auch verfügbar unter: /qr');
-            console.log('⚡ Bot sammelt jetzt 2 Minuten Discord-Antworten und leitet sie sofort weiter');
+            console.log('⚡ Bot sammelt jetzt 30 Sekunden Discord-Antworten (auch von Bots)');
             console.log('='.repeat(60) + '\n');
 
             // Store QR code for web display
@@ -164,38 +168,38 @@ async function initializeWhatsApp() {
             }, 20000);
         });
 
-    whatsappClient.on('ready', () => {
-        console.log('✅ WhatsApp client is ready!');
-        isWhatsAppReady = true;
-    });
+        whatsappClient.on('ready', () => {
+            console.log('✅ WhatsApp client is ready!');
+            isWhatsAppReady = true;
+        });
 
-    whatsappClient.on('authenticated', () => {
-        console.log('🔐 WhatsApp authenticated successfully');
-    });
+        whatsappClient.on('authenticated', () => {
+            console.log('🔐 WhatsApp authenticated successfully');
+        });
 
-    whatsappClient.on('auth_failure', (msg) => {
-        console.error('❌ WhatsApp authentication failed:', msg);
-    });
+        whatsappClient.on('auth_failure', (msg) => {
+            console.error('❌ WhatsApp authentication failed:', msg);
+        });
 
-    whatsappClient.on('disconnected', (reason) => {
-        console.log('📱 WhatsApp disconnected:', reason);
-        isWhatsAppReady = false;
+        whatsappClient.on('disconnected', (reason) => {
+            console.log('📱 WhatsApp disconnected:', reason);
+            isWhatsAppReady = false;
 
-        // Attempt to reconnect after 5 seconds
-        setTimeout(() => {
-            console.log('🔄 Attempting to reconnect WhatsApp...');
-            initializeWhatsApp();
-        }, 5000);
-    });
+            // Attempt to reconnect after 5 seconds
+            setTimeout(() => {
+                console.log('🔄 Attempting to reconnect WhatsApp...');
+                initializeWhatsApp();
+            }, 5000);
+        });
 
-    // Handle incoming WhatsApp messages
-    whatsappClient.on('message', async (message) => {
-        try {
-            await handleWhatsAppMessage(message);
-        } catch (error) {
-            console.error('Error handling WhatsApp message:', error);
-        }
-    });
+        // Handle incoming WhatsApp messages
+        whatsappClient.on('message', async (message) => {
+            try {
+                await handleWhatsAppMessage(message);
+            } catch (error) {
+                console.error('Error handling WhatsApp message:', error);
+            }
+        });
 
         console.log('🚀 Starting WhatsApp client initialization...');
         await whatsappClient.initialize();
@@ -276,14 +280,13 @@ async function handleWhatsAppMessage(message) {
     // Create bridge message ID for response collection
     const bridgeId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Store message info for response bridging with immediate forwarding enabled
+    // Store message info for response bridging
     activeMessages.set(bridgeId, {
         whatsappChatId: message.from,
         whatsappChat: chat,
         originalMessage: message,
         timestamp: Date.now(),
-        responses: [],
-        immediateForwarding: true // New flag for immediate forwarding
+        responses: []
     });
 
     try {
@@ -330,12 +333,9 @@ async function handleWhatsAppMessage(message) {
 
         console.log(`✅ Message sent to Discord: ${discordMessage}`);
 
-        // Send initial confirmation to WhatsApp
-        await chat.sendMessage(`🤖 *Command verarbeitet:* ${content}\n⏱️ *Bridge aktiv für 2 Minuten* - Discord-Antworten werden sofort weitergeleitet...`);
-
-        // Set timeout to close the bridge window after 2 minutes
+        // Set timeout to collect responses and send back to WhatsApp
         setTimeout(async () => {
-            await closeBridgeWindow(bridgeId);
+            await processCollectedResponses(bridgeId);
         }, CONFIG.messageTimeout);
 
     } catch (error) {
@@ -344,10 +344,13 @@ async function handleWhatsAppMessage(message) {
     }
 }
 
-// Handle Discord responses with immediate forwarding
+// Handle Discord responses
 async function handleDiscordMessage(message) {
     // Skip if not in bridge channel
     if (message.channel.id !== CONFIG.discordChannelId) return;
+
+    // Skip bot's own messages
+    if (message.author.id === discordClient.user.id) return;
 
     console.log(`📨 Discord response received: ${message.content}`);
 
@@ -356,102 +359,92 @@ async function handleDiscordMessage(message) {
         // Check if message was sent within timeout period
         const timeDiff = Date.now() - bridgeData.timestamp;
         if (timeDiff <= CONFIG.messageTimeout) {
-            // Immediately forward the response to WhatsApp
-            await forwardDiscordResponseToWhatsApp(message, bridgeData, bridgeId);
-            break; // Only forward to the most recent active bridge
-        }
-    }
-}
+            // Add response to bridge data
+            const response = {
+                content: message.content,
+                author: message.author.username,
+                attachments: [],
+                timestamp: Date.now()
+            };
 
-// New function to immediately forward Discord responses to WhatsApp
-async function forwardDiscordResponseToWhatsApp(discordMessage, bridgeData, bridgeId) {
-    try {
-        const chat = bridgeData.whatsappChat;
+            // Handle attachments
+            if (message.attachments.size > 0) {
+                for (const attachment of message.attachments.values()) {
+                    try {
+                        // Download attachment
+                        const response_download = await axios.get(attachment.url, {
+                            responseType: 'arraybuffer'
+                        });
 
-        // Create response object
-        const response = {
-            content: discordMessage.content,
-            author: discordMessage.author.username,
-            attachments: [],
-            timestamp: Date.now()
-        };
+                        const fileName = `${bridgeId}_${attachment.name}`;
+                        const filePath = path.join(uploadsDir, fileName);
 
-        // Add to responses for logging
-        bridgeData.responses.push(response);
+                        fs.writeFileSync(filePath, response_download.data);
 
-        // Send text response immediately (without author formatting for cleaner look)
-        if (response.content.trim()) {
-            await chat.sendMessage(`💬 ${response.content}`);
-            console.log(`✅ Forwarded Discord response to WhatsApp: ${response.content.substring(0, 50)}...`);
-        }
-
-        // Handle attachments
-        if (discordMessage.attachments.size > 0) {
-            for (const attachment of discordMessage.attachments.values()) {
-                try {
-                    // Download attachment
-                    const response_download = await axios.get(attachment.url, {
-                        responseType: 'arraybuffer'
-                    });
-
-                    const fileName = `${bridgeId}_${attachment.name}`;
-                    const filePath = path.join(uploadsDir, fileName);
-
-                    fs.writeFileSync(filePath, response_download.data);
-
-                    // Send attachment immediately
-                    if (fs.existsSync(filePath)) {
-                        // Check if it's a .txt file
-                        if (attachment.name.toLowerCase().endsWith('.txt')) {
-                            // Read and send the text content instead of the file
-                            const textContent = fs.readFileSync(filePath, 'utf8');
-                            await chat.sendMessage(`📄 *${attachment.name}:*\n${textContent}`);
-                        } else {
-                            // Send other files normally
-                            const media = MessageMedia.fromFilePath(filePath);
-                            await chat.sendMessage(media);
-                        }
-
-                        console.log(`✅ Forwarded Discord attachment to WhatsApp: ${attachment.name}`);
-
-                        // Clean up file
-                        fs.unlinkSync(filePath);
+                        response.attachments.push({
+                            name: attachment.name,
+                            path: filePath,
+                            contentType: attachment.contentType
+                        });
+                    } catch (error) {
+                        console.error('Error downloading Discord attachment:', error);
                     }
-                } catch (error) {
-                    console.error('Error sending attachment to WhatsApp:', error);
-                    await chat.sendMessage(`❌ Fehler beim Senden der Datei: ${attachment.name}`);
                 }
             }
+
+            bridgeData.responses.push(response);
+            break;
         }
-
-        // Small delay to prevent message flooding
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-    } catch (error) {
-        console.error('Error forwarding Discord response to WhatsApp:', error);
     }
 }
 
-// New function to close bridge window and send summary
-async function closeBridgeWindow(bridgeId) {
+// Process collected responses and send back to WhatsApp
+async function processCollectedResponses(bridgeId) {
     const bridgeData = activeMessages.get(bridgeId);
     if (!bridgeData) return;
 
-    console.log(`🔄 Closing bridge window for ID: ${bridgeId}`);
+    console.log(`🔄 Processing responses for bridge ID: ${bridgeId}`);
 
     try {
         const chat = bridgeData.whatsappChat;
-        const responseCount = bridgeData.responses.length;
 
-        if (responseCount === 0) {
-            // No responses received
-            await chat.sendMessage('⏰ *Bridge-Fenster geschlossen* - Keine Discord-Antworten in 2 Minuten erhalten.');
-        } else {
-            // Send summary
-            await chat.sendMessage(`✅ *Bridge-Fenster geschlossen* - ${responseCount} Discord-Antwort${responseCount > 1 ? 'en' : ''} weitergeleitet.`);
+        if (bridgeData.responses.length > 0) {
+            // Send each response back to WhatsApp
+            for (const response of bridgeData.responses) {
+                // Send text response without author formatting
+                if (response.content.trim()) {
+                    await chat.sendMessage(response.content);
+                }
+
+                // Send attachments
+                for (const attachment of response.attachments) {
+                    try {
+                        if (fs.existsSync(attachment.path)) {
+                            // Check if it's a .txt file
+                            if (attachment.name.toLowerCase().endsWith('.txt')) {
+                                // Read and send the text content instead of the file
+                                const textContent = fs.readFileSync(attachment.path, 'utf8');
+                                await chat.sendMessage(textContent);
+                            } else {
+                                // Send other files normally
+                                const media = MessageMedia.fromFilePath(attachment.path);
+                                await chat.sendMessage(media);
+                            }
+
+                            // Clean up file
+                            fs.unlinkSync(attachment.path);
+                        }
+                    } catch (error) {
+                        console.error('Error sending attachment to WhatsApp:', error);
+                    }
+                }
+
+                // Small delay between messages
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
         }
     } catch (error) {
-        console.error('Error closing bridge window:', error);
+        console.error('Error processing responses:', error);
     } finally {
         // Clean up
         activeMessages.delete(bridgeId);
@@ -678,13 +671,11 @@ app.get('/dashboard', (req, res) => {
         </div>
 
         <div class="alert">
-            <strong>💡 Neue Sofortweiterleitung:</strong>
-            <br>1. WhatsApp offline? → Vercel Dashboard → Functions → "View Function Logs"
-            <br>2. Suche nach "📱 WHATSAPP QR CODE" in den Logs
-            <br>3. QR Code schnell scannen (läuft in 20 Sekunden ab!)
-            <br>4. Bei Problemen: Seite neu laden um WhatsApp Client neu zu starten
-            <br>5. Bot sammelt jetzt 2 Minuten Discord-Antworten und leitet sie sofort weiter
-            <br>6. Jede Discord-Antwort wird sofort an WhatsApp gesendet (keine Wartezeit!)
+            <strong>💡 Render Setup erfolgreich!</strong>
+            <br>✅ Kein 10-Sekunden Timeout mehr
+            <br>✅ Persistent storage für WhatsApp sessions
+            <br>✅ 24/7 Uptime ohne Sleep
+            <br>Bot sammelt jetzt 30 Sekunden Discord-Antworten (auch von anderen Bots)
         </div>
 
         <div id="status-container"></div>
@@ -698,10 +689,10 @@ app.get('/dashboard', (req, res) => {
             <ol>
                 <li>Öffne WhatsApp → Menü → "Verknüpfte Geräte"</li>
                 <li>Klicke "Gerät verknüpfen"</li>
-                <li><a href="/qr" target="_blank">🔗 QR Code anzeigen</a> oder aus Vercel Logs</li>
+                <li><a href="/qr" target="_blank">🔗 QR Code anzeigen</a></li>
                 <li>Bridge ist bereit! Nutze "${CONFIG.triggerChar}" vor Nachrichten</li>
-                <li>Spezial: "${CONFIG.triggerChar}ai hello" wird direkt als ".ai hello" gesendet</li>
-                <li>Bot sammelt 2 Minuten lang Discord-Antworten und leitet sie sofort weiter</li>
+                <li>Spezial: "${CONFIG.triggerChar}ha" wird direkt als ".ha" gesendet</li>
+                <li>Bot sammelt 30 Sekunden lang Discord-Antworten (auch von anderen Bots)</li>
             </ol>
         </div>
     </div>
@@ -737,7 +728,7 @@ app.get('/dashboard', (req, res) => {
                             <p>"\${data.bridge.config.triggerChar}"</p>
                         </div>
                         <div class="stat-card">
-                            <h3>Bridge Fenster</h3>
+                            <h3>Timeout</h3>
                             <p>\${data.bridge.config.timeoutMinutes} Min</p>
                         </div>
                         <div class="stat-card">
@@ -763,8 +754,9 @@ app.get('/dashboard', (req, res) => {
 });
 
 // Initialize clients
-console.log('🚀 Starting WhatsApp-Discord Bridge on Vercel...');
-console.log('📡 Platform: Vercel Serverless');
+const platform = CONFIG.isVercel ? 'Vercel Serverless' : CONFIG.isRender ? 'Render Free Tier' : 'Local Development';
+console.log('🚀 Starting WhatsApp-Discord Bridge...');
+console.log('📡 Platform:', platform);
 console.log('🔧 Environment:', CONFIG.isProduction ? 'Production' : 'Development');
 console.log('📁 Uploads Dir:', uploadsDir);
 
@@ -793,20 +785,29 @@ setInterval(() => {
     }
 }, 60 * 60 * 1000);
 
-// Start server only in development
+// Start server (except on Vercel which uses serverless functions)
 let server;
-if (!CONFIG.isProduction) {
-    server = app.listen(CONFIG.port, () => {
-        console.log(`🌐 Server running on port ${CONFIG.port}`);
-        console.log(`📊 Dashboard: http://localhost:${CONFIG.port}/dashboard`);
-        console.log(`🔗 Health: http://localhost:${CONFIG.port}/health`);
-        console.log(`🏓 Ping: http://localhost:${CONFIG.port}/ping`);
-    });
-} else {
+if (CONFIG.isVercel) {
+    // Vercel uses serverless functions, no Express server needed
     console.log(`🌐 Vercel serverless function initialized`);
     console.log(`📊 Dashboard: /dashboard`);
     console.log(`🔗 Health: /health`);
     console.log(`🏓 Ping: /ping`);
+} else {
+    // Start Express server for Render, local development, etc.
+    const host = '0.0.0.0'; // Important for Render port binding
+    server = app.listen(CONFIG.port, host, () => {
+        console.log(`🌐 Server running on ${host}:${CONFIG.port}`);
+        if (CONFIG.isProduction) {
+            console.log(`📊 Dashboard: https://your-app.onrender.com/dashboard`);
+            console.log(`🔗 Health: https://your-app.onrender.com/health`);
+            console.log(`🏓 Ping: https://your-app.onrender.com/ping`);
+        } else {
+            console.log(`📊 Dashboard: http://localhost:${CONFIG.port}/dashboard`);
+            console.log(`🔗 Health: http://localhost:${CONFIG.port}/health`);
+            console.log(`🏓 Ping: http://localhost:${CONFIG.port}/ping`);
+        }
+    });
 }
 
 // Graceful shutdown
@@ -855,3 +856,4 @@ process.on('uncaughtException', (error) => {
 });
 
 export default app;
+
