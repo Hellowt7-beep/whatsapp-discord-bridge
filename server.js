@@ -30,7 +30,7 @@ const CONFIG = {
     port: process.env.PORT || 8080 || 3000,
     discordToken: process.env.DISCORD_BOT_TOKEN,
     discordChannelId: process.env.DISCORD_CHANNEL_ID,
-    messageTimeout: (process.env.MESSAGE_TIMEOUT_MINUTES || 0.5) * 60 * 1000,
+    messageTimeout: (process.env.MESSAGE_TIMEOUT_MINUTES || 2) * 60 * 1000,
     triggerChar: process.env.TRIGGER_CHARACTER || '.',
     sessionName: process.env.WHATSAPP_SESSION_NAME || 'bridge-session',
     isProduction: process.env.NODE_ENV === 'production',
@@ -280,13 +280,12 @@ async function handleWhatsAppMessage(message) {
     // Create bridge message ID for response collection
     const bridgeId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Store message info for response bridging
+    // Store message info for live bridging
     activeMessages.set(bridgeId, {
         whatsappChatId: message.from,
         whatsappChat: chat,
         originalMessage: message,
-        timestamp: Date.now(),
-        responses: []
+        timestamp: Date.now()
     });
 
     try {
@@ -333,9 +332,9 @@ async function handleWhatsAppMessage(message) {
 
         console.log(`✅ Message sent to Discord: ${discordMessage}`);
 
-        // Set timeout to collect responses and send back to WhatsApp
+        // Set timeout to clean up bridge session
         setTimeout(async () => {
-            await processCollectedResponses(bridgeId);
+            await cleanupBridgeSession(bridgeId);
         }, CONFIG.messageTimeout);
 
     } catch (error) {
@@ -359,96 +358,70 @@ async function handleDiscordMessage(message) {
         // Check if message was sent within timeout period
         const timeDiff = Date.now() - bridgeData.timestamp;
         if (timeDiff <= CONFIG.messageTimeout) {
-            // Add response to bridge data
-            const response = {
-                content: message.content,
-                author: message.author.username,
-                attachments: [],
-                timestamp: Date.now()
-            };
+            // Send response immediately to WhatsApp
+            try {
+                const chat = bridgeData.whatsappChat;
 
-            // Handle attachments
-            if (message.attachments.size > 0) {
-                for (const attachment of message.attachments.values()) {
-                    try {
-                        // Download attachment
-                        const response_download = await axios.get(attachment.url, {
-                            responseType: 'arraybuffer'
-                        });
+                // Send text response immediately
+                if (message.content.trim()) {
+                    await chat.sendMessage(message.content);
+                }
 
-                        const fileName = `${bridgeId}_${attachment.name}`;
-                        const filePath = path.join(uploadsDir, fileName);
+                // Handle attachments immediately
+                if (message.attachments.size > 0) {
+                    for (const attachment of message.attachments.values()) {
+                        try {
+                            // Download attachment
+                            const response_download = await axios.get(attachment.url, {
+                                responseType: 'arraybuffer'
+                            });
 
-                        fs.writeFileSync(filePath, response_download.data);
+                            const fileName = `${bridgeId}_${attachment.name}`;
+                            const filePath = path.join(uploadsDir, fileName);
 
-                        response.attachments.push({
-                            name: attachment.name,
-                            path: filePath,
-                            contentType: attachment.contentType
-                        });
-                    } catch (error) {
-                        console.error('Error downloading Discord attachment:', error);
+                            fs.writeFileSync(filePath, response_download.data);
+
+                            // Send attachment immediately
+                            if (attachment.name.toLowerCase().endsWith('.txt')) {
+                                // Read and send the text content instead of the file
+                                const textContent = fs.readFileSync(filePath, 'utf8');
+                                await chat.sendMessage(textContent);
+                            } else {
+                                // Send other files normally
+                                const media = MessageMedia.fromFilePath(filePath);
+                                await chat.sendMessage(media);
+                            }
+
+                            // Clean up file immediately after sending
+                            if (fs.existsSync(filePath)) {
+                                fs.unlinkSync(filePath);
+                            }
+
+                        } catch (error) {
+                            console.error('Error downloading/sending Discord attachment:', error);
+                        }
                     }
                 }
-            }
 
-            bridgeData.responses.push(response);
+                console.log(`✅ Live response forwarded to WhatsApp`);
+
+            } catch (error) {
+                console.error('Error forwarding response to WhatsApp:', error);
+            }
             break;
         }
     }
 }
 
-// Process collected responses and send back to WhatsApp
-async function processCollectedResponses(bridgeId) {
+// Clean up bridge session after timeout
+async function cleanupBridgeSession(bridgeId) {
     const bridgeData = activeMessages.get(bridgeId);
     if (!bridgeData) return;
 
-    console.log(`🔄 Processing responses for bridge ID: ${bridgeId}`);
+    console.log(`🧹 Cleaning up bridge session: ${bridgeId}`);
 
-    try {
-        const chat = bridgeData.whatsappChat;
-
-        if (bridgeData.responses.length > 0) {
-            // Send each response back to WhatsApp
-            for (const response of bridgeData.responses) {
-                // Send text response without author formatting
-                if (response.content.trim()) {
-                    await chat.sendMessage(response.content);
-                }
-
-                // Send attachments
-                for (const attachment of response.attachments) {
-                    try {
-                        if (fs.existsSync(attachment.path)) {
-                            // Check if it's a .txt file
-                            if (attachment.name.toLowerCase().endsWith('.txt')) {
-                                // Read and send the text content instead of the file
-                                const textContent = fs.readFileSync(attachment.path, 'utf8');
-                                await chat.sendMessage(textContent);
-                            } else {
-                                // Send other files normally
-                                const media = MessageMedia.fromFilePath(attachment.path);
-                                await chat.sendMessage(media);
-                            }
-
-                            // Clean up file
-                            fs.unlinkSync(attachment.path);
-                        }
-                    } catch (error) {
-                        console.error('Error sending attachment to WhatsApp:', error);
-                    }
-                }
-
-                // Small delay between messages
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-        }
-    } catch (error) {
-        console.error('Error processing responses:', error);
-    } finally {
-        // Clean up
-        activeMessages.delete(bridgeId);
-    }
+    // Clean up
+    activeMessages.delete(bridgeId);
 }
 
 // Self-ping function to keep alive
@@ -856,4 +829,5 @@ process.on('uncaughtException', (error) => {
 });
 
 export default app;
+
 
